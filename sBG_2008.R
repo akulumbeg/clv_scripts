@@ -4,7 +4,7 @@
 # by Peter S. Fader and Bruce G.S. Hardie                                          #
 # available at https://www.sciencedirect.com/science/article/pii/S1094996807700233 #
 #                                                                                  #
-# v1.0                                                                             #
+# v1.0.2                                                                             #
 #                                                                                  #
 # Alexander Kulumbeg                                                               #
 # alexander.kulumbeg@wu.ac.at                                                      #
@@ -12,45 +12,68 @@
 # Vienna University of Economics and Business                                      #
 ####################################################################################
 
+# install.packages("magrittr")
 # install.packages("ggplot2")
 # install.packages("plotly")
 # install.packages("readxl")
 # install.packages("RColorBrewer")
 
+library(magrittr)     # %>% (pipe) operator
 library(ggplot2)      # main plots
 library(plotly)       # interactive plots
 library(readxl)       # reading in .xlsx files
 library(RColorBrewer) # Color pallettes for plotly
 
-##### Functions ---------------------------------------------------------
+##### FUNCTIONS ###############################################################
 
-# Churn rate function, P(T = t)
-# Refer to Figure 7 in the paper
-# Returns a vector with churn probabilities for each period
-sBG_Churn <- Vectorize(function(alpha, beta, period) {
-  if (period == 1) {
-    churn <- alpha / (alpha + beta)
-  } else if (period > 1) {
-    churn <- sBG_Churn(alpha, beta, period - 1) * (beta + period - 2) / (alpha + beta + period - 1)
+# Churn probability function, P(T = t | alpha, beta)
+# Refer to Figure 6 in the paper
+# Returns a vector with churn probabilities for the end of each period
+
+sBG_Churn <- Vectorize(function(alpha, beta, period_t) {
+  if (period_t < 1) {
+    stop("Incorrect argument 'period_t', cannot be less than 1")
   } else {
-    churn <- stop("Incorrect argument 'period', cannot be less than 1")
+    beta(alpha + 1, beta + period_t - 1) / beta(alpha, beta)
   }
-  return(churn)
 })
+
+# Alternative implementation (Figure 7)
+# sBG_Churn <- Vectorize(function(alpha, beta, period) {
+#   if (period == 1) {
+#     churn <- alpha / (alpha + beta)
+#   } else if (period > 1) {
+#     churn <- sBG_Churn(alpha, beta, period - 1) * (beta + period - 2) / (alpha + beta + period - 1)
+#   } else {
+#     churn <- stop("Incorrect argument 'period', cannot be less than 1")
+#   }
+#   return(churn)
+# })
 
 # Survivor function, S(t | alpha, beta)
-# Calculated as 
+# Refer to Figure 5 in the paper
 # Returns a vector with survival probabilities for each period
-sBG_Survival <- Vectorize(function(alpha, beta, period) {
-  if (period == 1) {
-    survival <- 1 - sBG_Churn(alpha, beta, 1)
-  } else if (period > 1) {
-    survival <- sBG_Survival(alpha, beta, period - 1) - sBG_Churn(alpha, beta, period)
+
+sBG_Survival <- Vectorize(function(alpha, beta, period_t) {
+  if (period_t < 1) {
+    stop("Incorrect argument 'period_t', cannot be less than 1")
   } else {
-    survival <- stop("Incorrect argument 'period', cannot be less than 1")
+    beta(alpha, beta + period_t) / beta(alpha, beta)
   }
-  return(survival)
 })
+
+# Alternative implementation (Deducting churned customers)
+# sBG_Survival <- Vectorize(function(alpha, beta, period) {
+#   if (period == 1) {
+#     survival <- 1 - sBG_Churn(alpha, beta, 1)
+#   } else if (period > 1) {
+#     survival <- sBG_Survival(alpha, beta, period - 1) - sBG_Churn(alpha, beta, period)
+#   } else {
+#     survival <- stop("Incorrect argument 'period', cannot be less than 1")
+#   }
+#   return(survival)
+# })
+
 
 # Log-likelihood function
 # Refer to figure B2 (Appendix B) in the paper
@@ -70,30 +93,36 @@ sBG_LL <- function(paramsAB, active, lost) {
 # Randomizing function that creates new random data
 # Default: 6 to 12 years (including), arguments can be changed
 # Output: List with three elements - random active customers, derived lost customers, t (period)
-randomCust <- function(init = 1000, min = 6, max = 12, perc_min = 0.75, perc_max = 0.90) {
+randomCust <- function(init = sample(500:2000, 1), min = 6, max = 12, perc_min = 0.75, perc_max = 0.90) {
   length <- as.integer(sample(min:max, 1))
   randomActiveCust <- numeric(length)
-  randomActiveCust[1] <- init #cohort starts with 1000 customers
+  randomActiveCust[1] <- init #can be a random number (default) or a fixed number
   for (i in 2:length) {
     randomActiveCust[i] <- round(randomActiveCust[i - 1]*runif(1, perc_min, perc_max), 0)
   }
-  randomLostCust <- c(1:(length - 1))
-  for (i in 1:length(randomLostCust)) {
-    randomLostCust[i] <- randomActiveCust[i] - randomActiveCust[i + 1]
+  randomLostCust <- c(0:(length-1))
+  for (i in 2:length(randomLostCust)) {
+    randomLostCust[i] <- randomActiveCust[i-1] - randomActiveCust[i]
   }
-  randomActiveCust <- randomActiveCust[-1] #delete the first value
+  #randomActiveCust <- randomActiveCust[-1] #delete the first value
   randomCustList <- list(randomActiveCust, randomLostCust, length - 1)
   names(randomCustList) <- c("active", "lost", "t")
-  randomCustList$t <- c(1:randomCustList$t)
+  randomCustList$t <- c(0:randomCustList$t)
   randomCustList <- as.data.frame(randomCustList)
   return(randomCustList)
 }
 
-##### Data --------------------------------------------------------------
+##### 
 
-t <- 0:12
 
-# HIGHEND COHORT
+##### REPLICATING FADER & HARDIE (2008) #######################################
+
+
+# Data -------------------------------------------------------------------
+
+t <- 0:12    # 12 years
+
+# Highend Cohort
 
 highend_cust <- c(1000, 869, 743, 653, 593, 551, 517, 491, 468, 445, 427, 409, 394)
 df <- data.frame("t" = t[1:8], "high" = highend_cust[1:8])
@@ -113,7 +142,7 @@ df_highend <- cbind(df_highend, pred_lin_high, pred_quad_high, pred_exp_high)
 
 rm(pred_exp_high, pred_lin_high, pred_quad_high, df, i, highend_cust)
 
-# REGULAR COHORT
+# Regular Cohort
 
 regular_cust <- c(1000, 631, 468, 382, 326, 298, 262, 241, 223, 207, 194, 183, 173)
 df <- data.frame("t" = t[1:8], "reg" = regular_cust[1:8])
@@ -133,7 +162,8 @@ df_regular <- cbind(df_regular, pred_lin_reg, pred_quad_reg, pred_exp_reg)
 
 rm(pred_lin_reg, pred_quad_reg, pred_exp_reg, df, i, regular_cust)
 
-##### Plotting ----------------------------------------------------------
+# Plots ------------------------------------------------------------------
+
 # Figure 1 and Figure 2 respectively, recreated in (ggplot and) plotly
 
 # # ggplot highend (Fig. 1)
@@ -154,12 +184,12 @@ rm(pred_lin_reg, pred_quad_reg, pred_exp_reg, df, i, regular_cust)
 
 # !!! From now only using plotly due to its interactivity. Make sure to check whether JavaScript is enabled. !!!
 
-# plotly highend (Fig. 1)
+# Highend (Fig. 1)
 plot_ly(df_highend, x = t) %>%
-  add_trace(y = ~alive, name = "Actual", mode = "lines+markers") %>%
-  add_trace(y = ~pred_lin_high, name = "Prediction: Linear Model", mode = "lines+markers") %>%
-  add_trace(y = ~pred_quad_high, name = "Prediction: Quadratic Model", mode = "lines+markers") %>%
-  add_trace(y = ~pred_exp_high, name = "Prediction: Exponential Model", mode = "lines+markers") %>%
+  add_trace(y = ~alive, name = "Actual", mode = "lines+markers", type = "scatter") %>%
+  add_trace(y = ~pred_lin_high, name = "Prediction: Linear Model", mode = "lines+markers", type = "scatter") %>%
+  add_trace(y = ~pred_quad_high, name = "Prediction: Quadratic Model", mode = "lines+markers", type = "scatter") %>%
+  add_trace(y = ~pred_exp_high, name = "Prediction: Exponential Model", mode = "lines+markers", type = "scatter") %>%
   add_segments(x = 7, xend = 7, y = 0, yend = 1000, line = list(dash = "dot"), name = "Calibration") %>%
   layout(title = 'Actual Versus Regression-Model-Base Estimates of the Percentage of \n High End Customers Surviving at least 0-12 Years (Figure 1)',
          xaxis = list(title = 'Period (t)',
@@ -173,7 +203,7 @@ plot_ly(df_highend, x = t) %>%
   
 
 # plotly regular (Fig. 2)
-plot_ly(df_regular, x = t, colorscale = "Viridis") %>%
+plot_ly(df_regular, x = t) %>%
   add_trace(y = ~alive, name = "Actual", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_lin_reg, name = "Prediction: Linear Model", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_quad_reg, name = "Prediction: Quadratic Model", mode = "lines+markers", type = "scatter") %>%
@@ -192,12 +222,10 @@ plot_ly(df_regular, x = t, colorscale = "Viridis") %>%
 
 
 
-##### Adding sBG Predictions --------------------------------------------
-
-# HIGHEND
+# Add sBG Predictions -------------------------------------------
 
 # Table 1, High-end, first 7 years (calibration period, t1 -> t7)
-activeCust_high = df_highend$alive[2:8] # we skip period 0, so we need to shift indices by 1
+activeCust_high = df_highend$alive[2:8] # we skip period 0, so we need to shift indices by 1, t = {1, ..., 7}
 lostCust_high = df_highend$lost[2:8]
 
 sBG_LL(c(1,1), activeCust_high, lostCust_high)
@@ -206,11 +234,11 @@ optimParam_high <- optim(c(1,1), sBG_LL, active = activeCust_high, lost = lostCu
 
 # Visualize the churn rate, survival rate and likelihood levels
 # plotly requires dataframes, so we will create one
-time <- 1:7 # 7 periods / years; t = 7
+t <- 1:7 # 7 periods / years; t = 7
 churnValues <- sBG_Churn(alpha = optimParam_high$par[1], # Alpha param obtained by finding the maximum log-likelihood
                         beta = optimParam_high$par[2],   # Beta param obtained by finding the maximum log-likelihood
-                        period = time)
-churnDF <- data.frame(x = time, 
+                        period = t)
+churnDF <- data.frame(x = t, 
                       y = churnValues)
 
 
@@ -230,8 +258,8 @@ plot_ly(data = churnDF, x = ~x) %>%
 
 survivalValues <- sBG_Survival(alpha = optimParam_high$par[1], # Alpha param obtained by finding the maximum log-likelihood
                               beta = optimParam_high$par[2],  # Beta param obtained by finding the maximum log-likelihood
-                              period = time)
-survivalDF <- data.frame(x = time, 
+                              period = t)
+survivalDF <- data.frame(x = t, 
                          y = survivalValues)
 
 # Survival plot
@@ -276,7 +304,7 @@ pred_sBG_high <- c(1000, sBG_Survival(optimParam_high$par[1], optimParam_high$pa
 
 df_highend <- cbind(df_highend, pred_sBG_high)
 
-plot_ly(df_highend, x = t) %>%
+plot_ly(df_highend, x = ~t) %>%
   add_trace(y = ~alive, name = "Actual", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_lin_high, name = "Prediction: Linear Model", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_quad_high, name = "Prediction: Quadratic Model", mode = "lines+markers", type = "scatter") %>%
@@ -293,7 +321,10 @@ plot_ly(df_highend, x = t) %>%
                       (fixedrange=TRUE)
          ))
 
-# REGULAR
+rm(activeCust_high, churnValues, i, lostCust_high, pred_sBG_high, 
+   survivalValues, x, y, u, churnDF, survivalDF)    #cleanup
+
+# Table 1, Regular, first 7 years (calibration period, t1 -> t7)
 activeCust_reg = df_regular$alive[2:8] # we skip period 0, so we need to shift indices by 1
 lostCust_reg = df_regular$lost[2:8]
 
@@ -303,11 +334,11 @@ optimParam_reg <- optim(c(1,1), sBG_LL, active = activeCust_reg, lost = lostCust
 
 # Visualize the churn rate, survival rate and likelihood levels
 # plotly requires dataframes, so we will create one
-time <- 1:7 # 7 periods / years; t = 7
+t <- 1:7 # 7 periods / years; t = 7
 churnValues_reg <- sBG_Churn(alpha = optimParam_reg$par[1], # Alpha param obtained by finding the maximum log-likelihood
                          beta = optimParam_reg$par[2],   # Beta param obtained by finding the maximum log-likelihood
-                         period = time)
-churnDF_reg <- data.frame(x = time, 
+                         period = t)
+churnDF_reg <- data.frame(x = t, 
                       y = churnValues_reg)
 
 # Churn plot
@@ -324,8 +355,8 @@ plot_ly(data = churnDF_reg, x = ~x) %>%
 
 survivalValues_reg <- sBG_Survival(alpha = optimParam_reg$par[1], # Alpha param obtained by finding the maximum log-likelihood
                                beta = optimParam_reg$par[2],  # Beta param obtained by finding the maximum log-likelihood
-                               period = time)
-survivalDF_reg <- data.frame(x = time, 
+                               period = t)
+survivalDF_reg <- data.frame(x = t, 
                          y = survivalValues_reg)
 
 # Survival plot
@@ -370,7 +401,7 @@ pred_sBG_reg <- c(1000, sBG_Survival(optimParam_reg$par[1], optimParam_reg$par[2
 
 df_regular <- cbind(df_regular, pred_sBG_reg)
 
-plot_ly(df_regular, x = t) %>%
+plot_ly(df_regular, x = ~t) %>%
   add_trace(y = ~alive, name = "Actual", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_lin_reg, name = "Prediction: Linear Model", mode = "lines+markers", type = "scatter") %>%
   add_trace(y = ~pred_quad_reg, name = "Prediction: Quadratic Model", mode = "lines+markers", type = "scatter") %>%
@@ -387,46 +418,38 @@ plot_ly(df_regular, x = t) %>%
                       (fixedrange=TRUE)
          ))
 
+rm(activeCust_reg, churnValues_reg, i, lostCust_reg, pred_sBG_reg, 
+   survivalValues_reg, x, y, u, churnDF_reg, survivalDF_reg)    #cleanup
 
-##### Extrapolating Predictions to 16 years -----------------------------
+#####
 
-# HIGHEND only
+##### SINGLE COHORT (RANDOM GENERATION) #######################################
 
-m <- as.data.frame(matrix(nrow = 4, ncol = 3))
+# 13-14 years cohort (random), 8 years calibration, survival between 75 and 90% 
 
-df_highend_16 <- df_highend[, c("t", "alive", "lost")]
-colnames(m) <- c("t", "alive", "lost")
-df_highend_16 <- rbind(df_highend_16, m)
-rm(m)
-rownames(df_highend_16) <- 1:nrow(df_highend_16)
-df_highend_16$t <- 0:16
+set.seed(123)
 
-alive <- na.omit(df_highend_16$alive)
-alive <- alive[-1]
-lost <- na.omit(df_highend_16$lost)
-lost <- lost[-1]
+randCohort <- randomCust(min = 13, max = 14)
 
-optimParam_16 <- optim(c(1,1), sBG_LL, active = alive, lost = lost, method = "L-BFGS-B", lower = 0.0001)
+rand_LL <- sBG_LL(c(1,1), randCohort$active[2:9], randCohort$lost[2:9])
+rand_optim <- optim(c(1,1), sBG_LL, active = randCohort$active[2:9], lost = randCohort$lost[2:9], method = "L-BFGS-B", lower = 0.0001)
 
-pred_sBG_16 <- c(1000, round(sBG_Survival(optimParam_16$par[1], optimParam_16$par[2], 1:16), 3) * 1000)
+# Comparison 
+rand_sBG_pred <- c(randCohort$active[1], round(sBG_Survival(rand_optim$par[1], rand_optim$par[2], 1:(nrow(randCohort)-1)), 3) * randCohort$active[1])
+randCohort <- cbind(randCohort, rand_sBG_pred)
 
-df_highend_16 <- cbind(df_highend_16, pred_sBG_16)
-
-
-plot_ly(df_highend_16, x = ~t) %>%
-  add_trace(y = ~alive, name = "Actual", mode = "lines+markers", type = "scatter") %>%
-  add_trace(y = ~pred_sBG_16, name = "Prediction: sBG Model", mode = "lines+markers", type = "scatter") %>%
-  add_segments(x = 12, xend = 12, y = 0, yend = 1000, line = list(dash = "dot"), name = "Calibration") %>%
+plot_ly(randCohort, x = ~t) %>%
+  add_trace(y = ~active, name = "Actual", mode = "lines+markers", type = "scatter") %>%
+  add_trace(y = ~rand_sBG_pred, name = "Prediction: sBG Model", mode = "lines+markers", type = "scatter") %>%
+  add_segments(x = 8, xend = 8, y = 0, yend = (randCohort$active[1] + 50), line = list(dash = "dot"), name = "Calibration") %>%
   layout(title = 'Actual Versus Regression-Model-Base Estimates of the Percentage of \n High End Customers Surviving at least 0-12 Years (Figure 2)',
          xaxis = list(title = 'Period (t)',
                       zeroline = TRUE,
-                      range = c(0, 18),
+                      range = c(0, 14),
                       fixedrange=TRUE),
          yaxis = list(title = 'Surviving Customers',
-                      range = c(0,1000),
+                      range = c(0,(randCohort$active[1] + 50)),
                       (fixedrange=TRUE)
          ))
 
-
-
-
+##### MULTI-COHORT ############################################################
